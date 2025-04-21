@@ -25,7 +25,7 @@ NPY 话语解读器是一款基于大语言模型（LLM）的桌面应用，旨�
 
 1.  **克隆仓库**:
     ```bash
-    git clone <your-repository-url> # 将 <your-repository-url> 替换为你的仓库地址
+    git clone https://github.com/wangyuanchuan2022/npy_translator.git
     cd npy_translator
     ```
 
