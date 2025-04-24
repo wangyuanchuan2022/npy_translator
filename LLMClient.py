@@ -1,6 +1,6 @@
 import logging
 import openai
-from typing import List, Dict, Optional, Iterator
+from typing import List, Dict, Optional, Iterator, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class LLMClient:
             image_paths: Optional[List[str]] = None,
             temperature: float = 0.7,
             max_tokens: int = 8192
-    ) -> Iterator[str]:
+    ) -> Iterator[Tuple[str, str]]:
         """
         Create chat dialogue with streaming response.
         
@@ -44,7 +44,8 @@ class LLMClient:
             max_tokens: Maximum number of tokens
             
         Returns:
-            Iterator[str]: An iterator yielding chunks of the model generated response content.
+            Iterator[Tuple[str, str]]: An iterator yielding tuples of (type, content/reasoning/error).
+                                      'type' can be 'reasoning', 'content', or 'error'.
         """
         # 构造消息内容
         user_content = [{"type": "text", "text": user_message}]
@@ -57,11 +58,11 @@ class LLMClient:
             messages = [
                 {"role": "user", "content": user_content}
             ]
-        
+
         # 注意：当前实现未包含处理 image_paths 的流式逻辑
         if image_paths:
-             logger.warning("Image paths provided but streaming currently only supports text.")
-             # 如果需要支持图像，需要调整消息构造方式，类似非流式但需确认 API 支持
+            logger.warning("Image paths provided but streaming currently only supports text.")
+            # 如果需要支持图像，需要调整消息构造方式，类似非流式但需确认 API 支持
 
         try:
             stream = None
@@ -70,28 +71,34 @@ class LLMClient:
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "stream": True # 启用流式响应
+                "stream": True  # 启用流式响应
             }
 
             if "openrouter.ai" in str(self.base_url).lower():
                 request_params["extra_headers"] = {
-                        "X-Title": "NPY Translator", # 更新应用名称
-                        "HTTP-Referer": "https://github.com/your_repo", # 如果有仓库，更新链接
-                    }
+                    "X-Title": "NPY Translator",  # 更新应用名称
+                    "HTTP-Referer": "https://github.com/wangyuanchuan2022/npy_translator",  # 如果有仓库，更新链接
+                }
                 stream = self.client.chat.completions.create(**request_params)
             else:
                 stream = self.client.chat.completions.create(**request_params)
-            
+
             # 迭代处理流式响应
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content # yield 内容块
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    # 检查是否存在 reasoning 字段 (假设性检查)
+                    if hasattr(delta, 'reasoning') and delta.reasoning:
+                        yield "reasoning", delta.reasoning
+                    # 检查 content 字段
+                    if delta.content:
+                        yield "content", delta.content
 
         except Exception as e:
             logger.error(f"API stream request failed: {str(e)}")
             # 在流式传输中，错误可能在迭代期间发生
             # 可以选择 yield 一个错误标记或者直接 raise
-            yield f"\n[错误：API 请求失败: {str(e)}]" # 或者 raise e，让调用方处理
+            yield ("error", f"\n[错误：API 请求失败: {str(e)}]")
             # raise e # 取消注释以向上抛出异常
 
     def encode_image(self, image_path: str) -> str:

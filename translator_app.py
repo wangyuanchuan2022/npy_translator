@@ -77,6 +77,9 @@ class TranslatorApp:
         self.status_label = tk.Label(main_frame, text="", font=self.button_font, fg="green")
         self.status_label.grid(row=5, column=0, columnspan=2, pady=(5, 0))
 
+        # 为思考过程文本配置灰色标签
+        self.result_text.tag_configure("thinking", foreground="gray")
+
     def display_error(self, message):
         """辅助函数，用于在结果框中显示错误信息"""
         self.result_text.config(state=tk.NORMAL)
@@ -111,7 +114,8 @@ class TranslatorApp:
         # 更新UI，准备接收流式响应
         self.result_text.config(state=tk.NORMAL)
         self.result_text.delete("1.0", tk.END)
-        self.result_text.insert(tk.END, "正在思考中...\n")
+        # 使用灰色标签显示思考状态
+        self.result_text.insert(tk.END, "正在思考中...", "thinking")
         self.result_text.config(state=tk.DISABLED)
         self._clear_replies_frame()  # 清空旧的回复建议
         self.show_status("")  # 清空状态栏
@@ -120,13 +124,12 @@ class TranslatorApp:
         # **** COSTAR 框架系统提示词 (保持不变) ****
         system_prompt = """
 ## Context
-你正在帮助一位用户解读他伴侣（女朋友或媳妇）所说的一句话。用户希望了解这句话表面之下的潜在含义，例如潜台词、反语、未明说的期望或真实的情感。输入的语句会由用户提供。请注意，你可能不了解具体的对话背景和双方关系细节，需要基于对人际交往和亲密关系的普遍理解进行分析。
+你正在帮助一位用户解读他伴侣（女朋友或媳妇）所说的一句话。用户希望了解这句话表面之下的潜在含义，例如谐音、双关、潜台词、反语、未明说的期望或真实的情感。输入的语句会由用户提供。请注意，你可能不了解具体的对话背景和双方关系细节，需要基于对人际交往和亲密关系的普遍理解进行分析。
 
 ## Objective
 你的目标是：
 1. 分析用户提供的语句。
-2. 解读其最可能的真实含义，识别任何潜在的潜台词、反语或隐藏的情感。并用一句话表达ta想表达的意思。
-3. 提供一个清晰、有洞察力的解释。
+2. 解读其最可能的真实含义，识别任何谐音、双关、潜台词、反语或隐藏的情感。并用一句话表达ta想表达的意思，类似于将一句不易懂的句子翻译成一句易懂的句子。
 4. **重要:** 在解释之后，另起一行，使用 "可能的回复:" 开头，然后按编号列出3条建议的回复，每条不超过20字。格式如下：
 可能的回复:
 1. 回复一示例
@@ -149,7 +152,7 @@ class TranslatorApp:
 然后另起新行，使用 \'可能的回复:\' 作为明确的标记。
 接着按编号（1., 2., 3.）列出三条回复建议，每条占一行，且不超过20字。
 例如：
-‘想你了’
+'想你了'
 可能的回复:
 1. 我知道了，抱抱你。
 2. 是我没考虑周全，下次注意。
@@ -167,7 +170,6 @@ class TranslatorApp:
                 system_prompt=system_prompt,
                 user_message=user_prompt,
                 temperature=0.7,
-                max_tokens=300
             )
 
             # 首次接收前清空"正在思考"
@@ -176,22 +178,28 @@ class TranslatorApp:
             self.result_text.delete("1.0", tk.END)  # 清空"正在思考"
 
             # 迭代处理流式响应
-            for chunk in response_stream:
-                # 检查是否是错误信息 (根据 LLMClient 中 yield 的错误格式)
-                if isinstance(chunk, str) and chunk.startswith("\n[错误："):
-                    self.display_error(chunk.strip())  # 使用 display_error 显示错误
+            for chunk_type, chunk_data in response_stream:
+                # 检查是否是错误信息
+                if chunk_type == "error":
+                    self.display_error(chunk_data.strip())  # 使用 display_error 显示错误
                     return  # 出错则停止处理
 
+                # 首次接收非错误块时清空"正在思考"
                 if first_chunk:
-                    # self.result_text.delete("1.0", tk.END) # 已经在循环外清空
+                    self.result_text.config(state=tk.NORMAL)
+                    self.result_text.delete("1.0", tk.END) # 清空"正在思考"
                     first_chunk = False
 
-                # 实时显示在主结果框 (但处理完成后会重新整理)
-                self.result_text.insert(tk.END, chunk)
+                # 实时显示在主结果框 (reasoning 和 content 都显示为灰色)
+                self.result_text.config(state=tk.NORMAL)
+                self.result_text.insert(tk.END, chunk_data, "thinking")
+                self.result_text.config(state=tk.DISABLED)
                 self.result_text.see(tk.END)
                 self.root.update_idletasks()
 
-                full_response_text += chunk  # 累积完整文本
+                # 只有 content 块的内容累加到最终响应文本中
+                if chunk_type == "content":
+                    full_response_text += chunk_data
 
             # --- 流处理完毕后，解析并重新布局 ---
             self.result_text.config(state=tk.NORMAL)
@@ -229,7 +237,8 @@ class TranslatorApp:
                     copy_button = tk.Button(self.replies_frame, text="复制", command=copy_cmd, font=self.button_font)
                     copy_button.grid(row=i, column=1, sticky="e", pady=2, padx=(5, 0))
             else:
-                no_reply_label = tk.Label(self.replies_frame, text="未能提取建议回复。", font=self.button_font, fg="gray")
+                no_reply_label = tk.Label(self.replies_frame, text="未能提取建议回复。", font=self.button_font,
+                                          fg="gray")
                 no_reply_label.grid(row=0, column=0, columnspan=2)
 
 
